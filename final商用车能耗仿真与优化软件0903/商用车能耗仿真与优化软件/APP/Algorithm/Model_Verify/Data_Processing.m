@@ -1,0 +1,128 @@
+%% 实测数据清洗、过滤
+% 编写时间：2023-06-27
+% 编写人：陈宇轩
+% 说明：数据清理、过滤
+
+%% 数据读取、保存路径，以ascii方式保存
+data_save_file = strcat('..\..\+AppResult\+Data\+Model_Verification\+update\+EV_Data\');
+figure_save_file = strcat('..\..\+AppResult\+Figure\+Model_Verification\Data_Clear\');
+%% 分别读取用户上传的ascii原车实测数据
+MotorCurrVolt_origindata=dlmread(MotorCurrVolt_path,'',5,0);
+MotorTorqSpd_origindata=dlmread(MotorTorqSpd_path,'',5,0);
+PackCurrVolt_origindata=dlmread(PackCurrVolt_path,'',5,0);
+PackSOC_origindata=dlmread(PackSOC_path,'',5,0);
+ActuPwr_origindata=dlmread(ActuPwr_path,'',5,0);
+velocity_origindata=dlmread(velocity_path,'',5,0);
+%% 实测数据解析
+% 上传数据文件的时长
+MotorCurrVolt_T=MotorCurrVolt_origindata(:,1);
+MotorTorqSpd_T=MotorTorqSpd_origindata(:,1);
+PackCurrVolt_T=PackCurrVolt_origindata(:,1);
+PackSOC_T=PackSOC_origindata(:,1);
+ActuPwr_T=ActuPwr_origindata(:,1);
+velocity_T=velocity_origindata(:,1);
+% 电机电流电压
+MCCurrent=MotorCurrVolt_origindata(:,2);
+MCInputVolt=MotorCurrVolt_origindata(:,3);
+% 电机转矩转速
+MCTorque=MotorTorqSpd_origindata(:,2);
+MCSpeed=MotorTorqSpd_origindata(:,3);
+% 电池包电流电压
+PackCurr=PackCurrVolt_origindata(:,2);
+PackVolt=PackCurrVolt_origindata(:,3);
+% 电池包SOC
+PackSOC=PackSOC_origindata(:,2);
+% 附件功率
+ActuPwr=ActuPwr_origindata(:,2);
+% 车速
+velocity=velocity_origindata(:,2);
+%% 数据处理解析控制标志位
+Batt_Flag = 1;
+Motor_Flag = 1;
+Else_Flag=1;
+%% 电机实测数据处理====================================================
+if Motor_Flag==1
+    t_mc_start=max(MotorCurrVolt_T(1,1),MotorTorqSpd_T(1,1));
+    t_mc_end=min(MotorCurrVolt_T(end,1),MotorTorqSpd_T(end,1));
+    mc_time_diff=(t_mc_end-t_mc_start)/length(MotorCurrVolt_T);
+    % time_diff=1;
+    mc_time_list=t_mc_start:mc_time_diff:t_mc_end;
+    Motor_origin.time_diff=mc_time_diff;
+    Motor_origin.time_list=mc_time_list;
+    % Motor.rpm2radps=0.1047;%1rpm=1 r/min = 2π rad / 60 s = 0.1047 rad/s
+    Motor_origin.Voltage = medfilt1(interp1(MotorCurrVolt_T,MCInputVolt ,mc_time_list),5);
+    Motor_origin.Current = medfilt1(interp1(MotorCurrVolt_T,MCCurrent ,mc_time_list),5);
+
+    Motor_origin.Power_E =  Motor_origin.Current .* Motor_origin.Voltage ./1000; %电功率，单位：w
+    Motor_origin.Trq = medfilt1(interp1(MotorTorqSpd_T,MCTorque ,mc_time_list),5);
+    Motor_origin.Speed = medfilt1(interp1(MotorTorqSpd_T,MCSpeed ,mc_time_list),5);
+
+    Motor_origin.Speed = Motor_origin.Speed .*(Motor_origin.Speed >= 0);%电机转速，单位：rpm 
+    Motor_origin.Power_M=Motor_origin.Trq.*Motor_origin.Speed/9550;
+    % 制图
+    figure('Name','电机数据','NumberTitle','off')
+    subplot(211)
+    plot(Motor_origin.Power_E,'-r','LineWidth',2)
+    hold on
+    plot(Motor_origin.Power_M,'-k','LineWidth',2)
+    grid on
+    legend('电功率','机械功率')
+    xlabel('Time (0.01s)')
+    ylabel('Power (Kw)')
+    title('电机数据清洗结果')
+    Motor_origin.mc_max_spd_br = Motor_Model_struct.mc_max_spd_dr; %rpm
+    Motor_origin.mc_max_trq_dr=Motor_Model_struct.mc_max_trq_dr;
+    subplot(212)
+    plot(Motor_origin.mc_max_spd_br,Motor_origin.mc_max_trq_dr);
+    save(strcat(data_save_file,'Data_Motor_processed.mat'), 'Motor_origin');
+    fig_name = strcat(figure_save_file,'Data_Motor_processed.jpg');
+    saveas(gcf,fig_name)
+end
+%% 电池实测数据处理====================================================
+if Batt_Flag==1
+    t_bat_start=max(PackCurrVolt_T(1,1),PackSOC_T(1,1));
+    t_bat_end=min(PackCurrVolt_T(end,1),PackSOC_T(end,1));
+    batt_time_diff=(t_bat_end-t_bat_start)/length(PackCurrVolt_T);
+    bat_time_list=t_bat_start:batt_time_diff:t_bat_end;
+    % bat_time_list=mc_time_list;
+    Batt_origin.time_diff=batt_time_diff;
+    Batt_origin.time_list=bat_time_list;
+    Batt_origin.Voltage = medfilt1(interp1(PackCurrVolt_T,PackVolt ,bat_time_list),5);
+    Batt_origin.Current = medfilt1(interp1(PackCurrVolt_T,PackCurr ,bat_time_list),5);
+    Batt_origin.Power = Batt_origin.Voltage .* Batt_origin.Current / 1000;   % Unit:Kw
+    Batt_origin.SOC_Real = interp1(PackSOC_T,PackSOC ,bat_time_list);
+    % 制图
+    figure('Name','动力电池数据','NumberTitle','off')
+    subplot(3,1,1)
+    plot(Batt_origin.Voltage,'-b','LineWidth',2)
+    grid on
+    xlabel('Time（0.01s）')
+    ylabel('Voltage (V)')
+    subplot(3,1,2)
+    plot(Batt_origin.Current,'-k','LineWidth',2)
+    grid on
+    xlabel('Time（0.01s） ')
+    ylabel('Current (A)')
+    subplot(3,1,3)
+    plot(Batt_origin.SOC_Real,'-r','LineWidth',2)
+    grid on
+    xlabel('Time（0.01s） ')
+    ylabel('SOC (%)')
+    save(strcat(data_save_file,'Data_Batt_processed.mat'), 'Batt_origin');
+    fig_name = strcat(figure_save_file,'Data_Batt_processed.jpg');
+    saveas(gcf,fig_name)
+end
+%% 其他实测数据处理====================================================
+if Else_Flag==1
+    ActuPwr_time_diff=(ActuPwr_T(end,1)-ActuPwr_T(1,1))/length(ActuPwr_T);
+    ActuPwr_time_list=ActuPwr_T(1,1):ActuPwr_time_diff:ActuPwr_T(end,1);
+    ActuPwr_origin.time_diff=ActuPwr_time_diff;
+    ActuPwr_origin.time_list=ActuPwr_time_list;
+    ActuPwr_origin.ActuPwr=medfilt1(interp1(ActuPwr_T,ActuPwr ,ActuPwr_time_list),5);
+    velocity_time_diff=(velocity_T(end,1)-velocity_T(1,1))/length(velocity_T);
+    velocity_time_list=velocity_T(1,1):velocity_time_diff:velocity_T(end,1);
+    velocity_origin.time_diff=velocity_time_diff;
+    velocity_origin.time_list=velocity_time_list;
+    velocity_origin.velocity=medfilt1(interp1(velocity_T,velocity,velocity_time_list),5);
+end
+    close all
